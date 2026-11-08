@@ -1,6 +1,106 @@
 # Microservice architecture (gRPC, K8s, AWS...)
 ![Image architecture](assets/eks-architecture.drawio.png)
 
+## Running locally
+
+### Prerequisites
+
+* JDK 21 on `JAVA_HOME` (the Gradle wrapper downloads Gradle 8.14.5, which cannot run on JDK 25+).
+* Docker with Compose v2, and the Docker daemon running.
+* Free ports: `5432` (PostgreSQL), `9092` (Kafka), `5555` (gateway), `8101-8108` and `9101-9108` (services).
+
+Commands are written for Bash (Linux, macOS, Git Bash). In Windows PowerShell, use `.\gradlew.bat` and set
+variables first: `$env:DB_PASSWORD='iam_app'; .\gradlew.bat :services:auth:bootRun`.
+
+### 1. Start PostgreSQL and Kafka
+
+```bash
+docker compose up -d postgres kafka
+docker compose ps                     # wait until both are "healthy"
+```
+
+On a new volume, PostgreSQL creates the `epl` database and runs `database/bootstrap/bootstrap.sql` (roles, schemas)
+and `database/local/dev-passwords.sql` (every role's password = its name).
+
+### 2. Apply the database migrations
+
+```bash
+./gradlew migrateAll
+```
+
+This runs the Flyway migrations of every service, `auth` first, then exits. It needs no environment variables
+locally. Run it again whenever a service gets a new migration: a service refuses to start while one is pending.
+
+### 3. Start the auth service
+
+In its own terminal. Start it first: the other services resolve tenants through it, and the gateway gets its
+JWT keys from it.
+
+```bash
+DB_PASSWORD=iam_app BOOTSTRAP_ADMIN_PASSWORD='at-least-12-chars' ./gradlew :services:auth:bootRun
+```
+
+`BOOTSTRAP_ADMIN_PASSWORD` (12 characters or more) creates the first user, `admin`, while there is no user yet.
+It has no effect after that. Without `JWT_SIGNING_KEY`, auth generates a new key on every start, so sign in again
+after restarting it.
+
+### 4. Start the other services
+
+One terminal per service. Start only the ones you need; the gateway answers `503` for a backend that is not running.
+
+```bash
+DB_PASSWORD=md_app   ./gradlew :services:masterdata:bootRun
+DB_PASSWORD=inb_app  ./gradlew :services:inbound:bootRun
+DB_PASSWORD=inv_app  ./gradlew :services:inventory:bootRun
+DB_PASSWORD=outb_app ./gradlew :services:outbound:bootRun
+DB_PASSWORD=bill_app ./gradlew :services:billing:bootRun
+DB_PASSWORD=intg_app ./gradlew :services:integration:bootRun
+DB_PASSWORD=rpt_app  ./gradlew :services:report:bootRun
+```
+
+### 5. Start the gateway
+
+```bash
+./gradlew :services:gateway:bootRun
+```
+
+### 6. Check that it works
+
+```bash
+curl localhost:5555/api/actuator/health
+
+curl -X POST localhost:5555/api/rpc/auth/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"at-least-12-chars","clientId":"PC_WEB"}'
+```
+
+The login response contains `accessToken` and `mustChangePassword: true`. Send the token as
+`Authorization: Bearer <accessToken>`, and change the password with `POST /api/rpc/auth/v1/user/change-password`
+(`userId` is the token's `sub` claim). In PowerShell, use Git Bash for these commands or the Swagger UI below.
+
+| URL | What |
+|---|---|
+| http://localhost:5555/api/swagger-ui.html | Swagger UI (REST) |
+| http://localhost:5555/api/m/graphiql | GraphiQL (mobile API) |
+| http://localhost:5555/api/rpc | every exposed RPC |
+
+### Stopping and resetting
+
+```bash
+docker compose stop              # stop the containers, keep the data (Ctrl+C stops each service)
+docker compose down -v           # delete ALL local data (Postgres, Kafka, Nexus); repeat from step 1 afterwards
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `password authentication failed for user "<schema>_app"` | `DB_PASSWORD` is missing or wrong for that service (steps 3 and 4) |
+| `Schema <schema> does not match the migrations in this build` | Run `./gradlew migrateAll` |
+| `role "<schema>_owner" does not exist` or wrong passwords | The `postgres-data` volume predates the bootstrap scripts: `docker compose down -v`, then step 1 |
+| You want to call the gateway without running auth | Start the gateway with `GATEWAY_SECURITY_ENABLED=false` (local only) |
+| Gradle fails with an unsupported Java version | Point `JAVA_HOME` at JDK 21 |
+
 ## Repository layout
 
 One Gradle multi-project build (monorepo). Each service is still built and deployed on its own.
@@ -244,8 +344,8 @@ Requires JDK 21 (the Gradle wrapper downloads Gradle 8.14.5, which cannot run on
 
 ```bash
 docker compose up -d
-sudo docker exec -it epl-backend-apis-starter-kit-nexus-1 cat /nexus-data/admin.password
+sudo docker exec -it nexus cat /nexus-data/admin.password
 ```
 
-Nexus URL: http://localhost:8081. Keep its credentials out of the repository
+Nexus URL: http://localhost:8091. Keep its credentials out of the repository
 (use `~/.gradle/gradle.properties` or environment variables).
