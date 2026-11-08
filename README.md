@@ -9,8 +9,10 @@
 * Docker with Compose v2, and the Docker daemon running.
 * Free ports: `5432` (PostgreSQL), `9092` (Kafka), `5555` (gateway), `8101-8108` and `9101-9108` (services).
 
-Commands are written for Bash (Linux, macOS, Git Bash). In Windows PowerShell, use `.\gradlew.bat` and set
-variables first: `$env:DB_PASSWORD='iam_app'; .\gradlew.bat :services:auth:bootRun`.
+Run every command from the repository root. Steps 1 and 2 finish on their own, so they can share a terminal.
+Each service in steps 3 to 5 keeps running and needs its own terminal.
+
+Commands are written for Bash (Linux, macOS, Git Bash). For Windows PowerShell, see [below](#windows-powershell).
 
 ### 1. Start PostgreSQL and Kafka
 
@@ -83,6 +85,32 @@ The login response contains `accessToken` and `mustChangePassword: true`. Send t
 | http://localhost:5555/api/swagger-ui.html | Swagger UI (REST) |
 | http://localhost:5555/api/m/graphiql | GraphiQL (mobile API) |
 | http://localhost:5555/api/rpc | every exposed RPC |
+
+### Windows PowerShell
+
+Start Docker Desktop first, then open each terminal at the repository root:
+
+```powershell
+# Terminal 1: infrastructure and migrations (wait until postgres and kafka are "healthy"), then auth
+docker compose up -d postgres kafka
+docker compose ps
+.\gradlew.bat migrateAll
+$env:DB_PASSWORD='iam_app'; $env:BOOTSTRAP_ADMIN_PASSWORD='at-least-12-chars'; .\gradlew.bat :services:auth:bootRun
+
+# Terminals 2 to 8: one service each
+$env:DB_PASSWORD='md_app';   .\gradlew.bat :services:masterdata:bootRun
+$env:DB_PASSWORD='inb_app';  .\gradlew.bat :services:inbound:bootRun
+$env:DB_PASSWORD='inv_app';  .\gradlew.bat :services:inventory:bootRun
+$env:DB_PASSWORD='outb_app'; .\gradlew.bat :services:outbound:bootRun
+$env:DB_PASSWORD='bill_app'; .\gradlew.bat :services:billing:bootRun
+$env:DB_PASSWORD='intg_app'; .\gradlew.bat :services:integration:bootRun
+$env:DB_PASSWORD='rpt_app';  .\gradlew.bat :services:report:bootRun
+
+# Terminal 9: gateway
+.\gradlew.bat :services:gateway:bootRun
+```
+
+Then open http://localhost:5555/api/swagger-ui.html in a browser and call `login` with user `admin`.
 
 ### Stopping and resetting
 
