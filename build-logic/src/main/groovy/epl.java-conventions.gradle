@@ -1,4 +1,4 @@
-// Common setup for every Java module: Java 21, Spring Boot BOM, Lombok, JUnit 5.
+// Common setup for every Java module: Java 25, Spring Boot BOM, Lombok, JUnit 5.
 plugins {
     id 'java'
     id 'io.spring.dependency-management'
@@ -11,7 +11,7 @@ version = '1.0.0-SNAPSHOT'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
